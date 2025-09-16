@@ -26,13 +26,9 @@ import {
   Clock,
   Bookmark,
   BookmarkCheck,
-  Check,
-  X,
   Play,
   Pause,
   RotateCcw as Restart,
-  Maximize,
-  Minimize,
   Expand,
   Shrink,
 } from "lucide-react";
@@ -42,8 +38,7 @@ import type { Swiper as SwiperType } from "swiper";
 import "swiper/css";
 import "swiper/css/pagination";
 import "swiper/css/virtual";
-import { LazyLoadImage } from "react-lazy-load-image-component";
-import "react-lazy-load-image-component/src/effects/blur.css";
+import { trackEvent } from "@/lib/analytics";
 
 // Interfaces
 interface FlashcardData {
@@ -70,12 +65,76 @@ interface ViewerSettings {
   isRandomized: boolean;
   autoPlay: boolean;
   autoPlaySpeed: number;
-  enableSwipe: boolean;
 }
 
-interface CardStatus {
-  [key: string]: "known" | "difficult" | "unknown";
-}
+// Optimized Image Component with fast loading
+const OptimizedImage = memo(
+  ({
+    src,
+    alt,
+    className,
+    style,
+    onLoad,
+    onError,
+  }: {
+    src: string;
+    alt: string;
+    className?: string;
+    style?: React.CSSProperties;
+    onLoad?: () => void;
+    onError?: () => void;
+  }) => {
+    const [isLoaded, setIsLoaded] = useState(false);
+    const [hasError, setHasError] = useState(false);
+
+    const handleLoad = useCallback(() => {
+      setIsLoaded(true);
+      onLoad?.();
+    }, [onLoad]);
+
+    const handleError = useCallback(() => {
+      setHasError(true);
+      onError?.();
+    }, [onError]);
+
+    return (
+      <div className="relative w-full h-full">
+        {!isLoaded && !hasError && (
+          <div className="absolute inset-0 bg-gray-100 animate-pulse flex items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+          </div>
+        )}
+        {hasError && (
+          <div className="absolute inset-0 bg-gray-100 flex items-center justify-center">
+            <div className="text-center text-gray-500">
+              <div className="h-8 w-8 mx-auto mb-2 bg-gray-300 rounded"></div>
+              <p className="text-sm">Failed to load image</p>
+            </div>
+          </div>
+        )}
+        <img
+          src={src}
+          alt={alt}
+          className={`${className} ${
+            isLoaded ? "opacity-100" : "opacity-0"
+          } transition-opacity duration-200`}
+          style={{
+            ...style,
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            WebkitTouchCallout: "none",
+          }}
+          onLoad={handleLoad}
+          onError={handleError}
+          draggable={false}
+          loading="eager"
+        />
+      </div>
+    );
+  }
+);
+
+OptimizedImage.displayName = "OptimizedImage";
 
 // Memoized Card Component for better performance
 const FlashcardSlide = memo(
@@ -84,30 +143,22 @@ const FlashcardSlide = memo(
     index,
     isFlipped,
     isBookmarked,
-    status,
     zoomLevel,
-    settings,
-    dragDirection,
     cardKey,
     isFullscreen,
     onFlip,
     onBookmarkToggle,
-    onDragEnd,
     onZoomChange,
   }: {
     card: Flashcard;
     index: number;
     isFlipped: boolean;
     isBookmarked: boolean;
-    status: string;
     zoomLevel: number;
-    settings: ViewerSettings;
-    dragDirection: string | null;
     cardKey: number;
     isFullscreen: boolean;
     onFlip: () => void;
     onBookmarkToggle: (e: React.MouseEvent) => void;
-    onDragEnd: (event: any, info: any) => void;
     onZoomChange: (
       action: "increase" | "decrease" | "reset",
       e: React.MouseEvent
@@ -115,14 +166,6 @@ const FlashcardSlide = memo(
   }) => {
     return (
       <motion.div
-        drag={settings.enableSwipe ? (settings.isVertical ? "x" : "y") : false}
-        dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-        dragElastic={0.05}
-        dragTransition={{
-          bounceStiffness: 1200,
-          bounceDamping: 50,
-        }}
-        onDragEnd={onDragEnd}
         whileTap={{ scale: 0.98 }}
         className="relative"
         style={{
@@ -163,37 +206,6 @@ const FlashcardSlide = memo(
               zIndex: !isFlipped ? 2 : 1,
             }}
           >
-            <div className="absolute top-2 right-2 z-20">
-              {status === "known" && (
-                <motion.div
-                  className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center shadow-md"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 600,
-                    damping: 25,
-                  }}
-                >
-                  <Check className="h-5 w-5 text-white" />
-                </motion.div>
-              )}
-              {status === "difficult" && (
-                <motion.div
-                  className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center shadow-md"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 600,
-                    damping: 25,
-                  }}
-                >
-                  <X className="h-5 w-5 text-white" />
-                </motion.div>
-              )}
-            </div>
-
             <div className="absolute top-2 left-2 z-20">
               <motion.div whileTap={{ scale: 0.9 }}>
                 <Button
@@ -237,21 +249,10 @@ const FlashcardSlide = memo(
                 transition: "transform 0.2s ease-out",
               }}
             >
-              <LazyLoadImage
+              <OptimizedImage
                 src={card.frontImageUrl}
                 alt={`Card ${card.cardNumber} front`}
                 className="w-full h-full object-cover"
-                style={{
-                  userSelect: "none",
-                  WebkitUserSelect: "none",
-                  WebkitTouchCallout: "none",
-                }}
-                effect="blur"
-                draggable={false}
-                loading="lazy"
-                placeholder={
-                  <div className="w-full h-full bg-gray-200 animate-pulse" />
-                }
               />
             </div>
 
@@ -301,37 +302,6 @@ const FlashcardSlide = memo(
               zIndex: isFlipped ? 2 : 1,
             }}
           >
-            <div className="absolute top-2 right-2 z-20">
-              {status === "known" && (
-                <motion.div
-                  className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center shadow-md"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 600,
-                    damping: 25,
-                  }}
-                >
-                  <Check className="h-5 w-5 text-white" />
-                </motion.div>
-              )}
-              {status === "difficult" && (
-                <motion.div
-                  className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center shadow-md"
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{
-                    type: "spring",
-                    stiffness: 600,
-                    damping: 25,
-                  }}
-                >
-                  <X className="h-5 w-5 text-white" />
-                </motion.div>
-              )}
-            </div>
-
             <div className="absolute top-2 left-2 z-20">
               <motion.div whileTap={{ scale: 0.9 }}>
                 <Button
@@ -375,21 +345,10 @@ const FlashcardSlide = memo(
                 transition: "transform 0.2s ease-out",
               }}
             >
-              <LazyLoadImage
+              <OptimizedImage
                 src={card.backImageUrl}
                 alt={`Card ${card.cardNumber} back`}
                 className="w-full h-full object-cover"
-                style={{
-                  userSelect: "none",
-                  WebkitUserSelect: "none",
-                  WebkitTouchCallout: "none",
-                }}
-                effect="blur"
-                draggable={false}
-                loading="lazy"
-                placeholder={
-                  <div className="w-full h-full bg-gray-200 animate-pulse" />
-                }
               />
             </div>
 
@@ -428,80 +387,6 @@ const FlashcardSlide = memo(
               </motion.div>
             )}
           </motion.div>
-
-          {/* Drag indicators */}
-          {settings.enableSwipe &&
-            (settings.isVertical ? (
-              <>
-                <div className="absolute top-1/2 left-4 transform -translate-y-1/2 z-20 pointer-events-none">
-                  <motion.div
-                    animate={{
-                      opacity: dragDirection === "left" ? 1 : 0.3,
-                      scale: dragDirection === "left" ? 1.1 : 1,
-                    }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 400,
-                      damping: 25,
-                    }}
-                    className="text-green-500"
-                  >
-                    <Check className="h-10 w-10" />
-                  </motion.div>
-                </div>
-                <div className="absolute top-1/2 right-4 transform -translate-y-1/2 z-20 pointer-events-none">
-                  <motion.div
-                    animate={{
-                      opacity: dragDirection === "right" ? 1 : 0.3,
-                      scale: dragDirection === "right" ? 1.1 : 1,
-                    }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 400,
-                      damping: 25,
-                    }}
-                    className="text-red-500"
-                  >
-                    <X className="h-10 w-10" />
-                  </motion.div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none">
-                  <motion.div
-                    animate={{
-                      opacity: dragDirection === "up" ? 1 : 0.3,
-                      scale: dragDirection === "up" ? 1.1 : 1,
-                    }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 400,
-                      damping: 25,
-                    }}
-                    className="text-green-500"
-                  >
-                    <Check className="h-10 w-10" />
-                  </motion.div>
-                </div>
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 pointer-events-none">
-                  <motion.div
-                    animate={{
-                      opacity: dragDirection === "down" ? 1 : 0.3,
-                      scale: dragDirection === "down" ? 1.1 : 1,
-                    }}
-                    transition={{
-                      type: "spring",
-                      stiffness: 400,
-                      damping: 25,
-                    }}
-                    className="text-red-500"
-                  >
-                    <X className="h-10 w-10" />
-                  </motion.div>
-                </div>
-              </>
-            ))}
         </motion.div>
       </motion.div>
     );
@@ -546,25 +431,21 @@ export default function FlashcardViewer({
     isRandomized: false,
     autoPlay: false,
     autoPlaySpeed: 5,
-    enableSwipe: false,
   });
   const [shuffledCards, setShuffledCards] = useState<Flashcard[]>([]);
   const [bookmarkedCards, setBookmarkedCards] = useState<Set<string>>(
     new Set()
   );
-  const [cardStatus, setCardStatus] = useState<CardStatus>({});
   const [zoomLevel, setZoomLevel] = useState(1);
   const [studyTime, setStudyTime] = useState(0);
   const [timerActive, setTimerActive] = useState(true);
   const [showSummary, setShowSummary] = useState(false);
-  const [dragDirection, setDragDirection] = useState<
-    "up" | "down" | "left" | "right" | null
-  >(null);
   const [isMobile, setIsMobile] = useState(false);
   const [cardKey, setCardKey] = useState(0);
+  const [originalTheme, setOriginalTheme] = useState<string | null>(null);
   const swiperRef = useRef<SwiperType | null>(null);
   const autoPlayTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const imageCache = useRef<Map<string, boolean>>(new Map());
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Detect mobile device
@@ -580,6 +461,30 @@ export default function FlashcardViewer({
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
+  // Dark mode functionality for fullscreen
+  useEffect(() => {
+    if (isFullscreen) {
+      // Store original theme and switch to dark
+      const currentTheme = document.documentElement.getAttribute("data-theme");
+      setOriginalTheme(currentTheme);
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.documentElement.classList.add("dark");
+    } else {
+      // Restore original theme
+      if (originalTheme !== null) {
+        if (originalTheme) {
+          document.documentElement.setAttribute("data-theme", originalTheme);
+        } else {
+          document.documentElement.removeAttribute("data-theme");
+        }
+        if (originalTheme !== "dark") {
+          document.documentElement.classList.remove("dark");
+        }
+        setOriginalTheme(null);
+      }
+    }
+  }, [isFullscreen, originalTheme]);
 
   // Fullscreen functionality
   useEffect(() => {
@@ -649,11 +554,6 @@ export default function FlashcardViewer({
 
   useEffect(() => {
     setShuffledCards([...structuredFlashcards]);
-    const initialStatus: CardStatus = {};
-    structuredFlashcards.forEach((card) => {
-      initialStatus[card.id] = "unknown";
-    });
-    setCardStatus(initialStatus);
   }, [structuredFlashcards]);
 
   useEffect(() => {
@@ -701,43 +601,53 @@ export default function FlashcardViewer({
     return settings.isRandomized ? shuffledCards : structuredFlashcards;
   }, [settings.isRandomized, shuffledCards, structuredFlashcards]);
 
-  // Optimized image preloading with cache
+  // Enhanced image preloading with aggressive caching
   useEffect(() => {
     const preloadImages = async () => {
-      const preloadCount = isMobile ? 3 : 5;
-      const startIndex = Math.max(0, currentCardIndex - 1);
+      const preloadCount = isMobile ? 5 : 8; // Increased preload count
+      const startIndex = Math.max(0, currentCardIndex - 2);
       const endIndex = Math.min(startIndex + preloadCount, currentCards.length);
+
+      const preloadPromises = [];
 
       for (let i = startIndex; i < endIndex; i++) {
         const card = currentCards[i];
-        if (card && !imageCache.current.has(card.id)) {
-          try {
-            const frontImage = new Image();
-            const backImage = new Image();
+        if (card) {
+          // Preload front image
+          if (!imageCache.current.has(`${card.id}-front`)) {
+            const frontImg = new Image();
+            frontImg.crossOrigin = "anonymous";
+            imageCache.current.set(`${card.id}-front`, frontImg);
+            preloadPromises.push(
+              new Promise<void>((resolve) => {
+                frontImg.onload = () => resolve();
+                frontImg.onerror = () => resolve();
+                frontImg.src = card.frontImageUrl;
+              })
+            );
+          }
 
-            await Promise.all([
-              new Promise((resolve, reject) => {
-                frontImage.onload = resolve;
-                frontImage.onerror = reject;
-                frontImage.src = card.frontImageUrl;
-              }),
-              new Promise((resolve, reject) => {
-                backImage.onload = resolve;
-                backImage.onerror = reject;
-                backImage.src = card.backImageUrl;
-              }),
-            ]);
-
-            imageCache.current.set(card.id, true);
-          } catch (error) {
-            console.warn(`Failed to preload images for card ${card.id}`);
+          // Preload back image
+          if (!imageCache.current.has(`${card.id}-back`)) {
+            const backImg = new Image();
+            backImg.crossOrigin = "anonymous";
+            imageCache.current.set(`${card.id}-back`, backImg);
+            preloadPromises.push(
+              new Promise<void>((resolve) => {
+                backImg.onload = () => resolve();
+                backImg.onerror = () => resolve();
+                backImg.src = card.backImageUrl;
+              })
+            );
           }
         }
       }
+
+      // Load images in parallel with no artificial delay
+      await Promise.all(preloadPromises);
     };
 
-    const timeoutId = setTimeout(preloadImages, 100);
-    return () => clearTimeout(timeoutId);
+    preloadImages();
   }, [currentCardIndex, currentCards, isMobile]);
 
   const progress = useMemo(
@@ -829,28 +739,6 @@ export default function FlashcardViewer({
     [currentCardIndex, currentCards, triggerHaptic]
   );
 
-  const updateCardStatus = useCallback(
-    (status: "known" | "difficult") => {
-      const currentCard = currentCards[currentCardIndex];
-      if (!currentCard) return;
-      setCardStatus((prev) => ({
-        ...prev,
-        [currentCard.id]: status,
-      }));
-      setTimeout(() => {
-        if (swiperRef.current) {
-          if (swiperRef.current.isEnd) {
-            setShowSummary(true);
-          } else {
-            swiperRef.current.slideNext();
-          }
-        }
-      }, 300);
-      triggerHaptic();
-    },
-    [currentCardIndex, currentCards, triggerHaptic]
-  );
-
   const handleZoomChange = useCallback(
     (action: "increase" | "decrease" | "reset", e: React.MouseEvent) => {
       e.stopPropagation();
@@ -874,40 +762,6 @@ export default function FlashcardViewer({
     setTimerActive((prev) => !prev);
   }, []);
 
-  const handleDragEnd = useCallback(
-    (event: any, info: any) => {
-      if (!settings.enableSwipe) return;
-      if (settings.isVertical) {
-        const offset = info.offset.x;
-        const velocity = info.velocity.x;
-        if (Math.abs(offset) > 100 || Math.abs(velocity) > 500) {
-          if (offset > 0) {
-            setDragDirection("right");
-            updateCardStatus("difficult");
-          } else {
-            setDragDirection("left");
-            updateCardStatus("known");
-          }
-          setTimeout(() => setDragDirection(null), 300);
-        }
-      } else {
-        const offset = info.offset.y;
-        const velocity = info.velocity.y;
-        if (Math.abs(offset) > 100 || Math.abs(velocity) > 500) {
-          if (offset > 0) {
-            setDragDirection("down");
-            updateCardStatus("difficult");
-          } else {
-            setDragDirection("up");
-            updateCardStatus("known");
-          }
-          setTimeout(() => setDragDirection(null), 300);
-        }
-      }
-    },
-    [updateCardStatus, settings.isVertical, settings.enableSwipe]
-  );
-
   const resetStudySession = useCallback(() => {
     setCurrentCardIndex(0);
     setIsFlipped(false);
@@ -915,16 +769,10 @@ export default function FlashcardViewer({
     setShowSummary(false);
     setZoomLevel(1);
     setStudyTime(0);
-    const resetStatus: CardStatus = {};
-    currentCards.forEach((card) => {
-      resetStatus[card.id] = "unknown";
-    });
-    setCardStatus(resetStatus);
     swiperRef.current?.slideTo(0, 0);
     setTimerActive(true);
-    imageCache.current.clear();
     triggerHaptic();
-  }, [currentCards, triggerHaptic]);
+  }, [triggerHaptic]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -933,8 +781,31 @@ export default function FlashcardViewer({
       if (autoPlayTimerRef.current) {
         clearTimeout(autoPlayTimerRef.current);
       }
+      // Restore theme if component unmounts while in fullscreen
+      if (originalTheme !== null) {
+        if (originalTheme) {
+          document.documentElement.setAttribute("data-theme", originalTheme);
+        } else {
+          document.documentElement.removeAttribute("data-theme");
+        }
+        if (originalTheme !== "dark") {
+          document.documentElement.classList.remove("dark");
+        }
+      }
     };
-  }, []);
+  }, [originalTheme]);
+
+  // Track card view
+  useEffect(() => {
+    const currentCard = currentCards[currentCardIndex];
+    if (currentCard) {
+      trackEvent(
+        "Flashcard",
+        "View Card",
+        `Set: ${title} - Card: ${currentCard.cardNumber}`
+      );
+    }
+  }, [currentCardIndex, currentCards, title]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -954,15 +825,11 @@ export default function FlashcardViewer({
         case "ArrowUp":
           if (settings.isVertical) {
             swiperRef.current.slidePrev();
-          } else {
-            updateCardStatus("known");
           }
           break;
         case "ArrowDown":
           if (settings.isVertical) {
             swiperRef.current.slideNext();
-          } else {
-            updateCardStatus("difficult");
           }
           break;
         case " ":
@@ -971,12 +838,6 @@ export default function FlashcardViewer({
           break;
         case "b":
           toggleBookmark();
-          break;
-        case "k":
-          updateCardStatus("difficult");
-          break;
-        case "d":
-          updateCardStatus("known");
           break;
         case "r":
           handleZoomChange("reset", {
@@ -1015,7 +876,6 @@ export default function FlashcardViewer({
     handleFlip,
     settings.isVertical,
     toggleBookmark,
-    updateCardStatus,
     handleZoomChange,
     toggleFullscreen,
     isFullscreen,
@@ -1024,16 +884,9 @@ export default function FlashcardViewer({
 
   const stats = useMemo(() => {
     const total = currentCards.length;
-    const known = Object.values(cardStatus).filter(
-      (status) => status === "known"
-    ).length;
-    const difficult = Object.values(cardStatus).filter(
-      (status) => status === "difficult"
-    ).length;
-    const unknown = total - known - difficult;
     const bookmarked = bookmarkedCards.size;
-    return { total, known, difficult, unknown, bookmarked };
-  }, [currentCards.length, cardStatus, bookmarkedCards]);
+    return { total, bookmarked };
+  }, [currentCards.length, bookmarkedCards]);
 
   return (
     <div
@@ -1175,19 +1028,6 @@ export default function FlashcardViewer({
                       }
                     />
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <Check className="h-4 w-4" />
-                      <Label htmlFor="enable-swipe">Tinder-like Swipe</Label>
-                    </div>
-                    <Switch
-                      id="enable-swipe"
-                      checked={settings.enableSwipe}
-                      onCheckedChange={(checked) =>
-                        handleSettingsChange("enableSwipe", checked)
-                      }
-                    />
-                  </div>
                   {settings.autoPlay && (
                     <div className="space-y-2">
                       <Label htmlFor="autoplay-speed">
@@ -1229,16 +1069,8 @@ export default function FlashcardViewer({
                     </h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div className="flex items-center">
-                        <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
-                        <span>Known: {stats.known}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
-                        <span>Difficult: {stats.difficult}</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-3 h-3 rounded-full bg-gray-300 mr-2"></div>
-                        <span>Unknown: {stats.unknown}</span>
+                        <div className="w-3 h-3 rounded-full bg-blue-500 mr-2"></div>
+                        <span>Total Cards: {stats.total}</span>
                       </div>
                       <div className="flex items-center">
                         <Bookmark className="h-3 w-3 text-blue-500 mr-2" />
@@ -1270,8 +1102,10 @@ export default function FlashcardViewer({
                       </div>
                       <div>
                         •{" "}
-                        <kbd className="px-1 py-0.5 bg-muted rounded">Esc</kbd>{" "}
-                        - Exit Fullscreen
+                        <kbd className="px-1 py-0.5 bg-muted rounded">
+                          Arrow Keys
+                        </kbd>{" "}
+                        - Navigate Cards
                       </div>
                     </div>
                   </div>
@@ -1301,35 +1135,21 @@ export default function FlashcardViewer({
                 Study Session Complete!
               </h2>
               <div className="space-y-3 mb-5">
-                <div className="flex justify-between items-center p-2 bg-green-50 rounded">
+                <div className="flex justify-between items-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
                   <div className="flex items-center">
-                    <Check className="h-4 w-4 text-green-500 mr-2" />
-                    <span className="font-medium">Known</span>
+                    <div className="w-4 h-4 rounded-full bg-blue-500 mr-2"></div>
+                    <span className="font-medium">Total Cards</span>
                   </div>
-                  <span className="font-bold">{stats.known}</span>
+                  <span className="font-bold">{stats.total}</span>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-red-50 rounded">
-                  <div className="flex items-center">
-                    <X className="h-4 w-4 text-red-500 mr-2" />
-                    <span className="font-medium">Needs Practice</span>
-                  </div>
-                  <span className="font-bold">{stats.difficult}</span>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-gray-100 rounded">
-                  <div className="flex items-center">
-                    <div className="w-4 h-4 rounded-full bg-gray-300 mr-2"></div>
-                    <span className="font-medium">Not Reviewed</span>
-                  </div>
-                  <span className="font-bold">{stats.unknown}</span>
-                </div>
-                <div className="flex justify-between items-center p-2 bg-blue-50 rounded">
+                <div className="flex justify-between items-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
                   <div className="flex items-center">
                     <Bookmark className="h-4 w-4 text-blue-500 mr-2" />
                     <span className="font-medium">Bookmarked</span>
                   </div>
                   <span className="font-bold">{stats.bookmarked}</span>
                 </div>
-                <div className="flex justify-between items-center p-2 bg-purple-50 rounded">
+                <div className="flex justify-between items-center p-2 bg-purple-50 dark:bg-purple-900/20 rounded">
                   <div className="flex items-center">
                     <Clock className="h-4 w-4 text-purple-500 mr-2" />
                     <span className="font-medium">Study Time</span>
@@ -1370,17 +1190,16 @@ export default function FlashcardViewer({
             spaceBetween={20}
             slidesPerView={1}
             centeredSlides={true}
-            touchRatio={isMobile ? 0.8 : 1}
-            threshold={10}
-            speed={isMobile ? 200 : 250}
+            touchRatio={isMobile ? 1 : 1.2}
+            threshold={8}
+            speed={isMobile ? 250 : 300}
             resistance={true}
-            resistanceRatio={0.5}
+            resistanceRatio={0.7}
             virtual={{
               enabled: true,
-              cache: false,
-              renderExternal: false,
-              addSlidesBefore: 2,
-              addSlidesAfter: 2,
+              cache: true,
+              addSlidesBefore: 3,
+              addSlidesAfter: 3,
             }}
             style={{
               height: settings.isVertical ? "100%" : "auto",
@@ -1388,7 +1207,6 @@ export default function FlashcardViewer({
           >
             {currentCards.map((card, index) => {
               const isBookmarked = bookmarkedCards.has(card.id);
-              const status = cardStatus[card.id] || "unknown";
 
               return (
                 <SwiperSlide
@@ -1404,17 +1222,11 @@ export default function FlashcardViewer({
                     index={index}
                     isFlipped={index === currentCardIndex ? isFlipped : false}
                     isBookmarked={isBookmarked}
-                    status={status}
                     zoomLevel={index === currentCardIndex ? zoomLevel : 1}
-                    settings={settings}
-                    dragDirection={
-                      index === currentCardIndex ? dragDirection : null
-                    }
                     cardKey={cardKey}
                     isFullscreen={isFullscreen}
                     onFlip={index === currentCardIndex ? handleFlip : () => {}}
                     onBookmarkToggle={toggleBookmark}
-                    onDragEnd={handleDragEnd}
                     onZoomChange={handleZoomChange}
                   />
                 </SwiperSlide>
@@ -1424,7 +1236,7 @@ export default function FlashcardViewer({
         )}
       </div>
 
-      <style jsx>{`
+      <style>{`
         .card-container {
           transform-style: preserve-3d;
         }
@@ -1449,7 +1261,7 @@ export default function FlashcardViewer({
 
         .swiper-pagination {
           position: absolute !important;
-          bottom: calc(80px + env(safe-area-inset-bottom)) !important;
+          bottom: calc(40px + env(safe-area-inset-bottom)) !important;
           left: 50% !important;
           transform: translateX(-50%) !important;
           width: auto !important;
@@ -1482,7 +1294,7 @@ export default function FlashcardViewer({
 
         @media (max-width: 640px) {
           .swiper-pagination {
-            bottom: calc(100px + env(safe-area-inset-bottom)) !important;
+            bottom: calc(50px + env(safe-area-inset-bottom)) !important;
           }
           .swiper-vertical .swiper-pagination {
             right: 15px !important;
@@ -1527,7 +1339,7 @@ export default function FlashcardViewer({
           transform: translate3d(0, 0, 0);
         }
 
-        /* Fullscreen styles */
+        /* Fullscreen styles with dark mode */
         :fullscreen {
           background-color: hsl(var(--background));
         }
@@ -1542,6 +1354,13 @@ export default function FlashcardViewer({
 
         :-ms-fullscreen {
           background-color: hsl(var(--background));
+        }
+
+        /* Image loading optimization */
+        img {
+          image-rendering: -webkit-optimize-contrast;
+          image-rendering: optimize-contrast;
+          image-rendering: crisp-edges;
         }
       `}</style>
     </div>

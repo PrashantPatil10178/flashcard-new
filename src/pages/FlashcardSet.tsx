@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
-import { Play, Search, Clock, User, Grid, List } from "lucide-react";
+import { Play, Search, Clock, User, Grid, List, ArrowLeft } from "lucide-react";
 import { useFlashcards } from "@/hooks/useFlashcard";
 import {
   DropdownMenu,
@@ -17,6 +17,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { LazyLoadImage } from "react-lazy-load-image-component";
 import FlashcardViewer from "@/components/FlashcardViewer";
 import "react-lazy-load-image-component/src/effects/blur.css";
+import { trackEvent } from "@/lib/analytics";
 
 const standards = [
   { value: "9th", label: "9th (SSC)" },
@@ -73,7 +74,15 @@ interface FlashcardSet {
   thumbnailUrl?: string;
 }
 
-export default function FlashcardSetList() {
+interface FlashcardSetListProps {
+  standard: string;
+  onBack: () => void;
+}
+
+export default function FlashcardSetList({
+  standard,
+  onBack,
+}: FlashcardSetListProps) {
   const {
     data: flashcardSets = [],
     isLoading: loading,
@@ -83,12 +92,7 @@ export default function FlashcardSetList() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [selectedSet, setSelectedSet] = useState<FlashcardSet | null>(null);
   const [showViewer, setShowViewer] = useState(false);
-  const [selectedStandard, setSelectedStandard] = useState<string>("all");
   const [selectedSubject, setSelectedSubject] = useState<string>("all");
-
-  useEffect(() => {
-    setSelectedSubject("all");
-  }, [selectedStandard]);
 
   if (error) {
     return <div>Error loading flashcards.</div>;
@@ -102,25 +106,19 @@ export default function FlashcardSetList() {
 
   const filteredSets = useMemo(
     () =>
-      flashcardSets.filter((set) => {
-        const standardMatch =
-          selectedStandard === "all" || set.standard === selectedStandard;
-
+      flashcardSets.filter((set: FlashcardSet) => {
+        const standardMatch = set.standard === standard;
         const subjectMatch =
-          selectedStandard === "all" || // Don't filter by subject if 'all standards' is selected
-          selectedSubject === "all" ||
-          set.subject === selectedSubject;
-
+          selectedSubject === "all" || set.subject === selectedSubject;
         const searchTermLower = searchTerm.toLowerCase();
         const searchMatch =
           !searchTerm ||
           set.title.toLowerCase().includes(searchTermLower) ||
           set.description.toLowerCase().includes(searchTermLower) ||
           (set.createdByName || "").toLowerCase().includes(searchTermLower);
-
         return standardMatch && subjectMatch && searchMatch;
       }),
-    [flashcardSets, searchTerm, selectedStandard, selectedSubject]
+    [flashcardSets, searchTerm, standard, selectedSubject]
   );
 
   const getThumbnailUrl = (thumbnailId?: string | null) => {
@@ -130,6 +128,7 @@ export default function FlashcardSetList() {
   };
 
   const handleStudySet = (set: FlashcardSet) => {
+    trackEvent("Flashcard Set", "Study Set", set.title);
     setSelectedSet(set);
     setShowViewer(true);
   };
@@ -140,16 +139,11 @@ export default function FlashcardSetList() {
   };
 
   const groupedSets = useMemo(() => {
-    if (selectedStandard === "all") {
-      return {};
-    }
-
-    const subjects = getSubjectOptions(selectedStandard);
-    const standardInfo = standards.find((s) => s.value === selectedStandard);
-
+    const subjects = getSubjectOptions(standard);
+    const standardInfo = standards.find((s) => s.value === standard);
     const subjectsWithSets = subjects.reduce((acc, subject) => {
       const setsForSubject = filteredSets.filter(
-        (set) => set.subject === subject.value
+        (set: FlashcardSet) => set.subject === subject.value
       );
       if (setsForSubject.length > 0) {
         acc[subject.value] = { label: subject.label, sets: setsForSubject };
@@ -159,18 +153,19 @@ export default function FlashcardSetList() {
 
     if (Object.keys(subjectsWithSets).length > 0 && standardInfo) {
       return {
-        [selectedStandard]: {
+        [standard]: {
           label: standardInfo.label,
           subjects: subjectsWithSets,
         },
       };
     }
-
     return {};
-  }, [filteredSets, selectedStandard]);
+  }, [filteredSets, standard]);
 
   if (showViewer && selectedSet) {
-    const flashcardData = selectedSet.flashcardsData;
+    const flashcardData = selectedSet.flashcardsData.filter(
+      (card) => card.type !== "title"
+    ) as any;
     return (
       <FlashcardViewer
         flashcardData={flashcardData}
@@ -183,56 +178,46 @@ export default function FlashcardSetList() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="flex-1 p-4 md:p-6 max-w-7xl mx-auto w-full">
-        {/* Header */}
-        <div className="flex justify-center items-center mb-6 relative">
-          <div className="text-center">
-            <img
-              src="./logo.png"
-              alt="EasyLearning Logo"
-              className="h-12 w-auto mx-auto mb-2"
-            />
-            <h1 className="text-2xl md:text-3xl font-bold">
-              EasyLearning Flashcards
+        {/* Enhanced Header */}
+        <div className="flex items-center justify-between mb-8">
+          {/* Back Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onBack}
+            className="flex items-center gap-2 px-4 py-2 rounded-full shadow-sm hover:shadow-md transition-all duration-200"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span className="hidden md:inline">Standards</span>
+            <span className="md:hidden">Back</span>
+          </Button>
+
+          {/* Logo and Title */}
+          <div className="flex flex-col items-center">
+            <div className="relative mb-2">
+              <img
+                src="./logo.png"
+                alt="EasyLearning Logo"
+                className="h-12 w-auto mx-auto"
+              />
+              <div className="absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-10 h-1 bg-primary rounded-full"></div>
+            </div>
+            <h1 className="text-xl md:text-2xl font-bold text-center">
+              {standards.find((s) => s.value === standard)?.label} Flashcards
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-xs text-muted-foreground hidden sm:block mt-1">
               Browse and study flashcard sets
             </p>
           </div>
-          <div className="absolute right-0 top-0">
-            <ModeToggle />
+
+          {/* Enhanced Dark/Light Mode Toggle */}
+          <div className="flex items-center justify-center">
+            <div className="p-1 rounded-full bg-muted shadow-inner">
+              <ModeToggle />
+            </div>
           </div>
         </div>
 
-        {/* Standard Tiles */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-          <Card
-            onClick={() => setSelectedStandard("all")}
-            className={`cursor-pointer transition-all duration-200 ${
-              selectedStandard === "all"
-                ? "bg-primary text-primary-foreground transform scale-105"
-                : "hover:bg-muted hover:shadow-lg"
-            }`}
-          >
-            <CardContent className="p-4 text-center flex items-center justify-center h-full">
-              <h3 className="font-semibold">All Standards</h3>
-            </CardContent>
-          </Card>
-          {standards.map((standard) => (
-            <Card
-              key={standard.value}
-              onClick={() => setSelectedStandard(standard.value)}
-              className={`cursor-pointer transition-all duration-200 ${
-                selectedStandard === standard.value
-                  ? "bg-primary text-primary-foreground transform scale-105"
-                  : "hover:bg-muted hover:shadow-lg"
-              }`}
-            >
-              <CardContent className="p-4 text-center flex items-center justify-center h-full">
-                <h3 className="font-semibold">{standard.label}</h3>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -240,7 +225,7 @@ export default function FlashcardSetList() {
               placeholder="Search flashcards..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
+              className="pl-10 rounded-full shadow-sm focus:shadow-md transition-shadow"
             />
           </div>
           <div className="flex gap-2">
@@ -248,12 +233,11 @@ export default function FlashcardSetList() {
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
-                  className="w-[180px] justify-between"
-                  disabled={selectedStandard === "all"}
+                  className="w-[180px] justify-between rounded-full shadow-sm hover:shadow-md transition-all duration-200"
                 >
                   {selectedSubject === "all"
                     ? "All Subjects"
-                    : getSubjectOptions(selectedStandard).find(
+                    : getSubjectOptions(standard).find(
                         (s) => s.value === selectedSubject
                       )?.label}
                   <ChevronDown className="h-4 w-4" />
@@ -263,7 +247,7 @@ export default function FlashcardSetList() {
                 <DropdownMenuItem onClick={() => setSelectedSubject("all")}>
                   All Subjects
                 </DropdownMenuItem>
-                {getSubjectOptions(selectedStandard).map((subject) => (
+                {getSubjectOptions(standard).map((subject) => (
                   <DropdownMenuItem
                     key={subject.value}
                     onClick={() => setSelectedSubject(subject.value)}
@@ -273,13 +257,12 @@ export default function FlashcardSetList() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-
-            <div className="flex border rounded-md">
+            <div className="flex rounded-full bg-muted p-1 shadow-sm border border-border/50">
               <Button
                 variant={viewMode === "grid" ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode("grid")}
-                className="rounded-r-none"
+                className="rounded-l-full rounded-r-none h-8 w-8 p-0 transition-all duration-200"
               >
                 <Grid className="h-4 w-4" />
               </Button>
@@ -287,7 +270,7 @@ export default function FlashcardSetList() {
                 variant={viewMode === "list" ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode("list")}
-                className="rounded-l-none"
+                className="rounded-r-full rounded-l-none h-8 w-8 p-0 transition-all duration-200"
               >
                 <List className="h-4 w-4" />
               </Button>
@@ -296,7 +279,7 @@ export default function FlashcardSetList() {
         </div>
 
         {/* Results Count */}
-        <div className="mb-4">
+        <div className="mb-4 px-2">
           <p className="text-sm text-muted-foreground">
             {filteredSets.length}{" "}
             {filteredSets.length === 1 ? "flashcard set" : "flashcard sets"}{" "}
@@ -307,7 +290,7 @@ export default function FlashcardSetList() {
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
-              <Card key={i} className="animate-pulse">
+              <Card key={i} className="animate-pulse overflow-hidden">
                 <div className="h-40 bg-muted rounded-t-lg"></div>
                 <CardContent className="p-3">
                   <div className="h-4 bg-muted rounded mb-2"></div>
@@ -320,13 +303,18 @@ export default function FlashcardSetList() {
         ) : (
           <>
             {filteredSets.length === 0 ? (
-              <Card className="text-center py-8">
+              <Card className="text-center py-12 shadow-sm">
                 <CardContent>
+                  <div className="mb-4 flex justify-center">
+                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                      <Search className="h-8 w-8 text-muted-foreground" />
+                    </div>
+                  </div>
                   <h3 className="text-lg font-semibold mb-2">
                     No flashcard sets found
                   </h3>
                   <p className="text-muted-foreground mb-4">
-                    {searchTerm || selectedStandard !== "all"
+                    {searchTerm
                       ? "Try adjusting your search or filters"
                       : "No flashcard sets are available yet"}
                   </p>
@@ -334,235 +322,115 @@ export default function FlashcardSetList() {
               </Card>
             ) : (
               <div className="space-y-8">
-                {/* Show all sets when "All Standards" is selected */}
-                {selectedStandard === "all" && (
-                  <div>
-                    <h2 className="text-xl font-semibold mb-4">
-                      All Flashcard Sets
-                    </h2>
-                    <div
-                      className={
-                        viewMode === "grid"
-                          ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                          : "space-y-4"
-                      }
-                    >
-                      {filteredSets.map((set: FlashcardSet, index: number) => (
-                        <motion.div
-                          key={set.id}
-                          initial={{ opacity: 0, y: 20 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: index * 0.05 }}
-                        >
-                          <Card
-                            className={`hover:shadow-md transition-shadow cursor-pointer h-full flex py-0 ${
-                              viewMode === "list" ? "flex-row" : "flex-col"
-                            } py-0 pb-2`}
-                          >
-                            <div
-                              className={`relative ${
-                                viewMode === "list"
-                                  ? "w-1/3 aspect-[16/9]"
-                                  : "aspect-[16/9]"
-                              } overflow-hidden rounded-t-lg ${
-                                viewMode === "list"
-                                  ? "rounded-l-lg rounded-t-none"
-                                  : ""
-                              }`}
-                            >
-                              {set.thumbnailId ? (
-                                <LazyLoadImage
-                                  src={getThumbnailUrl(set.thumbnailId)}
-                                  alt={set.title}
-                                  className="w-full h-full object-cover"
-                                  effect="blur"
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-muted flex items-center justify-center">
-                                  <span className="text-5xl font-bold text-muted-foreground">
-                                    {set.title.charAt(0).toUpperCase()}
-                                  </span>
-                                </div>
-                              )}
-                              <div className="absolute top-2 right-2 flex gap-1">
-                                <Badge variant="secondary" className="text-xs">
-                                  {set.flashcardCount} cards
-                                </Badge>
-                                <Badge variant="default" className="text-xs">
-                                  {
-                                    standards
-                                      .find(
-                                        (s: { value: string; label: string }) =>
-                                          s.value === set.standard
-                                      )
-                                      ?.label.split(" ")[0]
-                                  }
-                                </Badge>
-                              </div>
-                            </div>
-                            <CardContent className="p-3 flex-1 flex flex-col">
-                              <h3 className="font-semibold text-base mb-1 line-clamp-1">
-                                {set.title}
+                {Object.entries(groupedSets).map(
+                  ([standardValue, standardData]) => (
+                    <div key={standardValue}>
+                      <div className="space-y-6">
+                        {Object.entries(standardData.subjects).map(
+                          ([subjectValue, subjectData]) => (
+                            <div key={subjectValue}>
+                              <h3 className="text-lg font-medium mb-3 flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full bg-primary"></div>
+                                {subjectData.label}
                               </h3>
-                              <p className="text-muted-foreground text-xs mb-3 line-clamp-2 flex-1">
-                                {set.description || "No description available"}
-                              </p>
-                              <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
-                                <div className="flex items-center gap-1">
-                                  <User className="h-3 w-3" />
-                                  <span className="truncate max-w-[100px]">
-                                    {set.createdByName || "EasyLearning"}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <Clock className="h-3 w-3" />
-                                  {new Date(set.createdAt).toLocaleDateString()}
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <div className="text-xs">
-                                  <Badge variant="outline" className="text-xs">
-                                    {
-                                      getSubjectOptions(set.standard).find(
-                                        (s: { value: string; label: string }) =>
-                                          s.value === set.subject
-                                      )?.label
-                                    }
-                                  </Badge>
-                                </div>
-                                <Button
-                                  onClick={() => handleStudySet(set)}
-                                  size="sm"
-                                  className="h-8 text-xs"
-                                >
-                                  <Play className="h-3 w-3 mr-1" />
-                                  Study
-                                </Button>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Show grouped sets when a specific standard is selected */}
-                {selectedStandard !== "all" &&
-                  Object.entries(groupedSets).map(
-                    ([standardValue, standardData]) => (
-                      <div key={standardValue}>
-                        <h2 className="text-xl font-semibold mb-4">
-                          {standardData.label}
-                        </h2>
-                        <div className="space-y-6">
-                          {Object.entries(standardData.subjects).map(
-                            ([subjectValue, subjectData]) => (
-                              <div key={subjectValue}>
-                                <h3 className="text-lg font-medium mb-3 flex items-center gap-2">
-                                  <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                  {subjectData.label}
-                                </h3>
-                                <div
-                                  className={
-                                    viewMode === "grid"
-                                      ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-                                      : "space-y-4"
-                                  }
-                                >
-                                  {subjectData.sets.map((set, index) => (
-                                    <motion.div
-                                      key={set.id}
-                                      initial={{ opacity: 0, y: 20 }}
-                                      animate={{ opacity: 1, y: 0 }}
-                                      transition={{ delay: index * 0.05 }}
-                                    >
-                                      <Card className="hover:shadow-md transition-shadow cursor-pointer h-full flex flex-col">
-                                        <div
-                                          className={`relative ${
-                                            viewMode === "list"
-                                              ? "w-1/3 aspect-[16/9]"
-                                              : "aspect-[16/9]"
-                                          } overflow-hidden rounded-t-lg ${
-                                            viewMode === "list"
-                                              ? "rounded-l-lg rounded-t-none"
-                                              : ""
-                                          }`}
-                                        >
-                                          {set.thumbnailId ? (
-                                            <LazyLoadImage
-                                              src={getThumbnailUrl(
-                                                set.thumbnailId
-                                              )}
-                                              alt={set.title}
-                                              className="w-full h-full object-cover"
-                                              effect="blur"
-                                            />
-                                          ) : (
-                                            <div className="w-full h-full bg-muted flex items-center justify-center">
-                                              <span className="text-5xl font-bold text-muted-foreground">
-                                                {set.title
-                                                  .charAt(0)
-                                                  .toUpperCase()}
-                                              </span>
-                                            </div>
-                                          )}
-                                          <div className="absolute top-2 right-2">
-                                            <Badge
-                                              variant="secondary"
-                                              className="text-xs"
-                                            >
-                                              {set.flashcardCount} cards
-                                            </Badge>
+                              <div
+                                className={
+                                  viewMode === "grid"
+                                    ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+                                    : "space-y-4"
+                                }
+                              >
+                                {subjectData.sets.map((set, index) => (
+                                  <motion.div
+                                    key={set.id}
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: index * 0.05 }}
+                                  >
+                                    <Card className="hover:shadow-lg transition-all duration-300 cursor-pointer h-full flex flex-col overflow-hidden border border-border/50 hover:border-primary/30 py-0">
+                                      <div
+                                        className={`relative ${
+                                          viewMode === "list"
+                                            ? "w-1/3 aspect-[16/9]"
+                                            : "aspect-[16/9]"
+                                        } overflow-hidden ${
+                                          viewMode === "list"
+                                            ? "rounded-l-lg rounded-t-none"
+                                            : ""
+                                        }`}
+                                      >
+                                        {set.thumbnailId ? (
+                                          <LazyLoadImage
+                                            src={getThumbnailUrl(
+                                              set.thumbnailId
+                                            )}
+                                            alt={set.title}
+                                            className="w-full h-full object-cover"
+                                            effect="blur"
+                                          />
+                                        ) : (
+                                          <div className="w-full h-full bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center">
+                                            <span className="text-5xl font-bold text-primary/30">
+                                              {set.title
+                                                .charAt(0)
+                                                .toUpperCase()}
+                                            </span>
+                                          </div>
+                                        )}
+                                        <div className="absolute top-2 right-2">
+                                          <Badge
+                                            variant="secondary"
+                                            className="text-xs shadow-sm"
+                                          >
+                                            {set.flashcardCount} cards
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                      <CardContent className="p-4 flex-1 flex flex-col">
+                                        <h3 className="font-semibold text-base mb-1 line-clamp-1">
+                                          {set.title}
+                                        </h3>
+                                        <p className="text-muted-foreground text-xs mb-3 line-clamp-2 flex-1">
+                                          {set.description ||
+                                            "No description available"}
+                                        </p>
+                                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
+                                          <div className="flex items-center gap-1">
+                                            <User className="h-3 w-3" />
+                                            <span className="truncate max-w-[100px]">
+                                              {set.createdByName ||
+                                                "EasyLearning"}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center gap-1">
+                                            <Clock className="h-3 w-3" />
+                                            {new Date(
+                                              set.createdAt
+                                            ).toLocaleDateString()}
                                           </div>
                                         </div>
-                                        <CardContent className="p-3 flex-1 flex flex-col">
-                                          <h3 className="font-semibold text-base mb-1 line-clamp-1">
-                                            {set.title}
-                                          </h3>
-                                          <p className="text-muted-foreground text-xs mb-3 line-clamp-2 flex-1">
-                                            {set.description ||
-                                              "No description available"}
-                                          </p>
-                                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-3">
-                                            <div className="flex items-center gap-1">
-                                              <User className="h-3 w-3" />
-                                              <span className="truncate max-w-[100px]">
-                                                {set.createdByName ||
-                                                  "EasyLearning"}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-center gap-1">
-                                              <Clock className="h-3 w-3" />
-                                              {new Date(
-                                                set.createdAt
-                                              ).toLocaleDateString()}
-                                            </div>
-                                          </div>
-                                          <div className="flex items-center justify-end">
-                                            <Button
-                                              onClick={() =>
-                                                handleStudySet(set)
-                                              }
-                                              size="sm"
-                                              className="h-8 text-xs"
-                                            >
-                                              <Play className="h-3 w-3 mr-1" />
-                                              Study
-                                            </Button>
-                                          </div>
-                                        </CardContent>
-                                      </Card>
-                                    </motion.div>
-                                  ))}
-                                </div>
+                                        <div className="flex items-center justify-end">
+                                          <Button
+                                            onClick={() => handleStudySet(set)}
+                                            size="sm"
+                                            className="h-8 text-xs rounded-full px-4 shadow-sm hover:shadow-md transition-all duration-200"
+                                          >
+                                            <Play className="h-3 w-3 mr-1" />
+                                            Study
+                                          </Button>
+                                        </div>
+                                      </CardContent>
+                                    </Card>
+                                  </motion.div>
+                                ))}
                               </div>
-                            )
-                          )}
-                        </div>
+                            </div>
+                          )
+                        )}
                       </div>
-                    )
-                  )}
+                    </div>
+                  )
+                )}
               </div>
             )}
           </>
